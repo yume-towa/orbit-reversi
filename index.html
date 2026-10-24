@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>旋回リバーシ – prototype</title>
+<style>
+  :root{
+    --ink:#12161C; --panel:#1a212b; --panel2:#141a22;
+    --line:#2b3644;
+    --d0:#1b2430; --d1:#202b39; --d2:#263241; --d3:#2d3b4c;
+    --ivory:#ECE4D3; --ivory-rim:#cbc3b2;
+    --black:#0b0e13; --black-rim:#39434f;
+    --amber:#E0A83C; --amber-soft:rgba(224,168,60,.16); --amber-line:rgba(224,168,60,.85);
+    --cyan:#5AC4D4;
+    --text:#CBD4DF; --muted:#7A8695;
+    --sans:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(120% 80% at 50% -10%, #1a222d 0%, var(--ink) 60%) fixed;
+    color:var(--text); font-family:var(--sans);
+    min-height:100vh; display:flex; justify-content:center;
+    padding:14px 12px 28px;
+  }
+  .wrap{width:100%; max-width:460px}
+
+  header{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:12px}
+  h1{font-size:16px; font-weight:600; letter-spacing:.14em; margin:0; text-transform:uppercase}
+  h1 .jp{display:block; font-size:11px; letter-spacing:.32em; color:var(--muted); font-weight:500; margin-top:3px}
+  .tag{font-family:var(--mono); font-size:10px; color:var(--muted); border:1px solid var(--line); padding:3px 7px; border-radius:100px}
+
+  .status{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px}
+  .score{display:flex; gap:14px; font-family:var(--mono); font-size:20px; font-weight:600}
+  .score span{display:flex; align-items:center; gap:7px}
+  .pip{width:15px; height:15px; border-radius:50%}
+  .pip.b{background:radial-gradient(circle at 34% 30%, #2b323d, var(--black)); border:1px solid var(--black-rim)}
+  .pip.w{background:radial-gradient(circle at 34% 30%, #fff, var(--ivory)); border:1px solid var(--ivory-rim)}
+  .active-badge{font-family:var(--mono); font-size:11px; color:var(--muted); text-align:right; line-height:1.5}
+  .active-badge b{color:var(--amber); font-weight:600}
+
+  /* board */
+  .board-frame{
+    position:relative; border-radius:12px; padding:9px;
+    background:linear-gradient(160deg,#232d3a,#161d27);
+    box-shadow:0 1px 0 rgba(255,255,255,.05) inset, 0 18px 40px -20px #000;
+  }
+  .grid{
+    position:relative; width:100%; aspect-ratio:1/1;
+    display:grid; grid-template-columns:repeat(8,1fr); grid-template-rows:repeat(8,1fr);
+    gap:2px; background:var(--line); border-radius:6px; overflow:hidden;
+  }
+  .cell{
+    position:relative; display:flex; align-items:center; justify-content:center;
+    transition:background .18s ease, box-shadow .18s ease;
+  }
+  .cell[data-d="0"]{background:var(--d0)} .cell[data-d="1"]{background:var(--d1)}
+  .cell[data-d="2"]{background:var(--d2)} .cell[data-d="3"]{background:var(--d3)}
+
+  .disc{width:78%; height:78%; border-radius:50%; transform:scale(0); transition:transform .16s cubic-bezier(.34,1.56,.64,1)}
+  .disc.show{transform:scale(1)}
+  .disc.b{background:radial-gradient(circle at 35% 28%, #2f3743 0%, #12161d 55%, #05070a 100%); box-shadow:0 2px 4px -1px #000, 0 0 0 1px #000}
+  .disc.w{background:radial-gradient(circle at 35% 28%, #ffffff 0%, var(--ivory) 55%, #d3cbb8 100%); box-shadow:0 2px 4px -1px rgba(0,0,0,.5)}
+
+  .cell.legal::after{content:""; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:26%; height:26%; border-radius:50%;
+    background:var(--cyan); opacity:.5; box-shadow:0 0 8px var(--cyan)}
+  .cell.legal{cursor:pointer}
+  .cell.legal:hover{background:rgba(90,196,212,.12)}
+
+  /* active ring highlight during rotate */
+  .cell.ring{box-shadow:inset 0 0 0 2px var(--amber-line); background:var(--amber-soft); cursor:pointer; z-index:2}
+  .cell.ringpulse{animation:ringp .5s ease}
+  @keyframes ringp{0%{box-shadow:inset 0 0 0 2px var(--amber-line)}50%{box-shadow:inset 0 0 0 3px #ffd980}100%{box-shadow:inset 0 0 0 2px var(--amber-line)}}
+  .cell.selectable-ring{cursor:pointer}
+
+  /* trace: the line(s) that caused a capture this turn */
+  .cell.trace{z-index:3; box-shadow:inset 0 0 0 2px rgba(122,214,168,.95), 0 0 12px rgba(122,214,168,.45); animation:tracein .28s ease}
+  @keyframes tracein{from{box-shadow:inset 0 0 0 0 rgba(122,214,168,0)}to{box-shadow:inset 0 0 0 2px rgba(122,214,168,.95), 0 0 12px rgba(122,214,168,.45)}}
+
+  /* rotation countdown on the forecast ring: 3=blue 2=yellow 1=red */
+  .cell.warn3{box-shadow:inset 0 0 0 2px rgba(90,150,230,.55)}
+  .cell.warn2{box-shadow:inset 0 0 0 2px rgba(224,190,70,.7)}
+  .cell.warn1{box-shadow:inset 0 0 0 2px rgba(235,90,80,.9); animation:warnpulse 0.9s ease-in-out infinite}
+  @keyframes warnpulse{0%,100%{box-shadow:inset 0 0 0 2px rgba(235,90,80,.9)}50%{box-shadow:inset 0 0 0 3px rgba(255,130,120,1)}}
+
+  /* 4マス回転の対象は斜めストライプで塗る（リングは枠線のみ） */
+  .cell.bw{background-image:repeating-linear-gradient(45deg, transparent 0 5px, var(--wcs,rgba(255,255,255,.15)) 5px 8px)}
+
+  /* direction arrows along the forecast ring */
+  .cell.arrR::before,.cell.arrD::before,.cell.arrL::before,.cell.arrU::before{
+    content:'➤'; position:absolute; top:50%; left:50%; z-index:5; pointer-events:none;
+    font-size:13px; line-height:1; color:var(--wc,#fff); text-shadow:0 0 6px var(--wc,#fff), 0 1px 2px #000;
+  }
+  .cell.arrR::before{transform:translate(-50%,-50%) rotate(0deg)}
+  .cell.arrD::before{transform:translate(-50%,-50%) rotate(90deg)}
+  .cell.arrL::before{transform:translate(-50%,-50%) rotate(180deg)}
+  .cell.arrU::before{transform:translate(-50%,-50%) rotate(270deg)}
+
+  /* controls */
+  .controls{margin-top:14px; min-height:96px}
+  .phase-label{font-family:var(--mono); font-size:11px; letter-spacing:.06em; color:var(--muted); margin-bottom:9px; display:flex; align-items:center; gap:7px}
+  .phase-label .dot{width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 7px var(--amber)}
+
+  .rings{display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-bottom:8px}
+  .rings button{font-family:var(--mono)}
+  .row{display:flex; gap:7px}
+  button.ui{
+    flex:1; appearance:none; cursor:pointer; color:var(--text);
+    background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    padding:11px 8px; font-size:13px; font-family:var(--sans); font-weight:500;
+    transition:background .14s, border-color .14s, transform .05s;
+  }
+  button.ui:active{transform:translateY(1px)}
+  button.ui:hover{border-color:#3a4757}
+  button.ui.sel{border-color:var(--amber); background:var(--amber-soft); color:#f0d9a4}
+  button.ui.turn{border-color:var(--amber); color:#f0d9a4}
+  button.ui:disabled{opacity:.35; cursor:default}
+  button.ui.ghost{background:transparent}
+
+  .dir{font-size:15px}
+  .hint{font-size:12px; color:var(--muted); line-height:1.65; margin-top:2px}
+  .hint b{color:var(--text); font-weight:600}
+
+  .log{margin-top:12px; font-family:var(--mono); font-size:11.5px; color:var(--muted); min-height:16px; letter-spacing:.02em}
+  .log b{color:var(--amber)}
+
+  /* footer bar */
+  .bar{display:flex; align-items:center; justify-content:space-between; margin-top:14px; gap:10px}
+  .toggle{display:flex; align-items:center; gap:9px; cursor:pointer; user-select:none; font-size:12.5px; color:var(--muted)}
+  .switch{width:38px; height:22px; border-radius:100px; background:var(--panel); border:1px solid var(--line); position:relative; transition:background .16s}
+  .switch::after{content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--muted); transition:transform .16s, background .16s}
+  .toggle.on .switch{background:var(--amber-soft); border-color:var(--amber)}
+  .toggle.on .switch::after{transform:translateX(16px); background:var(--amber)}
+  .toggle.on{color:#f0d9a4}
+  .reset{font-family:var(--mono); font-size:11px; color:var(--muted); background:none; border:1px solid var(--line); padding:8px 12px; border-radius:8px; cursor:pointer}
+  .reset:hover{color:var(--text); border-color:#3a4757}
+  .seg{display:inline-flex; border:1px solid var(--line); border-radius:9px; overflow:hidden; background:var(--panel2)}
+  .segbtn{appearance:none; cursor:pointer; background:transparent; color:var(--muted); border:0; padding:8px 14px; font-family:var(--sans); font-size:12.5px; font-weight:500}
+  .segbtn.on{background:var(--amber-soft); color:#f0d9a4}
+  .segbtn:not(.on):hover{color:var(--text)}
+  .setup-panel{background:linear-gradient(160deg,#232d3a,#161d27); border-radius:12px; padding:20px 16px;
+    box-shadow:0 1px 0 rgba(255,255,255,.05) inset, 0 18px 40px -20px #000}
+  .setup-title{font-size:13px; font-weight:600; letter-spacing:.22em; color:var(--muted); text-transform:uppercase;
+    text-align:center; margin-bottom:18px}
+  .setup-row{display:flex; align-items:center; gap:10px; margin-bottom:12px}
+  .setup-label{font-size:12px; color:var(--muted); white-space:nowrap; width:64px}
+  .startbtn{display:block; width:100%; margin-top:18px; appearance:none; cursor:pointer;
+    background:var(--amber-soft); border:1px solid var(--amber); color:#f0d9a4; border-radius:10px;
+    padding:14px; font-size:15px; font-weight:600; font-family:var(--sans); letter-spacing:.08em;
+    transition:filter .15s, transform .05s}
+  .startbtn:hover{filter:brightness(1.15)}
+  .startbtn:active{transform:translateY(1px)}
+  .demo-wrap{margin-top:16px}
+  .grid.demo{max-width:230px; margin:0 auto; gap:1px; border-radius:5px; pointer-events:none}
+  .segbtn.lv{flex:1}
+  #levelbar{margin-top:8px}
+
+  .over{position:absolute; inset:9px; display:none; align-items:center; justify-content:center; flex-direction:column; gap:6px;
+    background:rgba(12,16,22,.82); backdrop-filter:blur(3px); border-radius:6px; text-align:center; z-index:5}
+  .over.show{display:flex}
+  .over .big{font-size:22px; font-weight:600; letter-spacing:.03em}
+  .over .sub{font-family:var(--mono); font-size:12px; color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Orbit Reversi<span class="jp">旋回リバーシ</span></h1>
+    <span class="tag">prototype</span>
+  </header>
+
+  <!-- 設定（タイトル）画面 -->
+  <div id="setup">
+    <div class="setup-panel">
+      <div class="setup-title">対戦設定</div>
+
+      <div class="demo-wrap" style="margin:0 0 18px">
+        <div class="grid demo" id="demogrid"></div>
+        <div class="hint" style="text-align:center;margin-top:8px" id="demolabel">旋回デモ</div>
+      </div>
+
+      <div class="setup-row">
+        <span class="setup-label">対戦形式</span>
+        <div class="seg" style="flex:1">
+          <button id="m-pvp" class="segbtn lv" onclick="setMode(false)">対人</button>
+          <button id="m-ai" class="segbtn lv on" onclick="setMode(true)">AI対戦</button>
+        </div>
+      </div>
+
+      <div class="setup-row" id="sidebar">
+        <span class="setup-label">手番</span>
+        <div class="seg" style="flex:1">
+          <button id="sd1" class="segbtn lv on" onclick="setSide(1)">先手 ●</button>
+          <button id="sd2" class="segbtn lv" onclick="setSide(2)">後手 ○</button>
+        </div>
+      </div>
+
+      <div class="setup-row" id="levelbar">
+        <span class="setup-label">AIの強さ</span>
+        <div class="seg" style="flex:1">
+          <button id="lv1" class="segbtn lv" onclick="setLevel(1)">よわい</button>
+          <button id="lv2" class="segbtn lv on" onclick="setLevel(2)">ふつう</button>
+          <button id="lv3" class="segbtn lv" onclick="setLevel(3)">つよい</button>
+          <button id="lv4" class="segbtn lv" onclick="setLevel(4)">さいきょう</button>
+        </div>
+      </div>
+
+      <div class="setup-row">
+        <span class="setup-label">旋回タイプ</span>
+        <div class="seg" style="flex:1">
+          <button id="rt-ring" class="segbtn lv on" onclick="setRotType('ring')">リング</button>
+          <button id="rt-block" class="segbtn lv" onclick="setRotType('block')">4マス</button>
+          <button id="rt-mix" class="segbtn lv" onclick="setRotType('mix')">複合</button>
+        </div>
+      </div>
+
+      <div class="setup-row">
+        <span class="setup-label">旋回箇所</span>
+        <div class="seg" style="flex:1">
+          <button id="rc1" class="segbtn lv on" onclick="setRotCount(1)">1</button>
+          <button id="rc2" class="segbtn lv" onclick="setRotCount(2)">2</button>
+          <button id="rc3" class="segbtn lv" onclick="setRotCount(3)">3</button>
+          <button id="rc4" class="segbtn lv" onclick="setRotCount(4)">4</button>
+        </div>
+      </div>
+
+      <div class="setup-row">
+        <span class="setup-label">旋回ターン</span>
+        <div class="seg" style="flex:1">
+          <button id="re1" class="segbtn lv" onclick="setRotEvery(1)">1</button>
+          <button id="re2" class="segbtn lv" onclick="setRotEvery(2)">2</button>
+          <button id="re3" class="segbtn lv on" onclick="setRotEvery(3)">3</button>
+          <button id="re4" class="segbtn lv" onclick="setRotEvery(4)">4</button>
+          <button id="re5" class="segbtn lv" onclick="setRotEvery(5)">5</button>
+        </div>
+      </div>
+
+      <button class="startbtn" onclick="startGame()">対戦スタート</button>
+      <div class="hint" style="text-align:center;margin-top:10px">設定した手数ごとに盤が自動で旋回。返せるマスに置くだけ。</div>
+    </div>
+  </div>
+
+  <!-- 対局画面 -->
+  <div id="game" style="display:none">
+  <div class="status">
+    <div class="score">
+      <span><i class="pip b"></i><b id="sb">2</b></span>
+      <span><i class="pip w"></i><b id="sw">2</b></span>
+    </div>
+    <div class="active-badge" id="turn">手番 <b>●</b><br>置く</div>
+  </div>
+
+  <div class="board-frame">
+    <div class="grid" id="grid"></div>
+    <div class="over" id="over">
+      <div class="big" id="over-big"></div>
+      <div class="sub" id="over-sub"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="reset" onclick="reset()">もう一度</button>
+        <button class="reset" onclick="showSetup()">設定へ</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls"></div>
+
+  <div class="log" id="log">先手 ● から。</div>
+
+  <div class="bar">
+    <button class="reset" onclick="showSetup()">← 設定へ</button>
+    <button class="reset" onclick="reset()">リセット</button>
+  </div>
+  </div><!-- /#game -->
+</div>
+
+<script>
+const EMPTY=0, BLACK=1, WHITE=2;
+const DIRS=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+const inb=(r,c)=>r>=0&&r<8&&c>=0&&c<8;
+const depth=(r,c)=>Math.min(r,c,7-r,7-c);
+const opp=p=>p===BLACK?WHITE:BLACK;
+const glyph=p=>p===BLACK?'●':'○';
+const ringName=d=>['外周','内2','内3','中央'][d];
+const ROT_MS=340, FLIP_MS=380;
+let rotEvery=3;                  // 何手ごとに旋回するか (1-5)
+
+let board, player, over=false, busy=false;
+let moveCount=0, nextRots=[];    // [{ring,dir},...] 次の旋回（複数可）
+let rotCount=1;                  // 1回の旋回で回る箇所の数 (1-3)
+let rotType='ring';              // 'ring'=リング回転 / 'block'=4マス回転
+let aiEnabled=true, aiLevel=2;   // 1=よわい 2=ふつう 3=つよい 4=さいきょう
+let humanColor=BLACK, aiColor=WHITE;
+const LEVEL_DEPTH={1:0,2:1,3:2,4:4};
+const SOLVE_AT=12;   // さいきょう: 残り空きマスがこれ以下なら終局まで完全読み
+const LEVEL_NAME={1:'よわい',2:'ふつう',3:'つよい',4:'さいきょう'};
+
+/* ---------- core rules ---------- */
+function ringCellsCW(d){
+  const lo=d, hi=7-d, cells=[];
+  for(let c=lo;c<=hi;c++) cells.push([lo,c]);
+  for(let r=lo+1;r<=hi;r++) cells.push([r,hi]);
+  for(let c=hi-1;c>=lo;c--) cells.push([hi,c]);
+  for(let r=hi-1;r>=lo+1;r--) cells.push([r,lo]);
+  return cells;
+}
+function rotateCellsInto(bd,cells,dir){
+  const vals=cells.map(([r,c])=>bd[r][c]), n=vals.length, nv=[];
+  for(let i=0;i<n;i++) nv[i]= dir==='cw'? vals[(i-1+n)%n] : vals[(i+1)%n];
+  cells.forEach(([r,c],i)=>bd[r][c]=nv[i]);
+}
+function rotateInto(bd,d,dir){ rotateCellsInto(bd,ringCellsCW(d),dir); }
+function blockCellsCW(r,c){ return [[r,c],[r,c+1],[r+1,c+1],[r+1,c]]; }
+function rotLabel(e){ return e.type==='ring'? ringName(e.ring) : `4マス(${e.r+1},${e.c+1})`; }
+/* captures only along the 8 rays from the placed disc */
+function flipsFrom(bd,me,pr,pc){
+  const o=opp(me), set=new Set();
+  for(const[dr,dc] of DIRS){
+    let rr=pr+dr,cc=pc+dc; const line=[];
+    while(inb(rr,cc)&&bd[rr][cc]===o){line.push([rr,cc]);rr+=dr;cc+=dc;}
+    if(inb(rr,cc)&&bd[rr][cc]===me&&line.length) line.forEach(([a,b])=>set.add(a+','+b));
+  }
+  return set;
+}
+function linesFrom(bd,me,pr,pc){
+  const o=opp(me), segs=[];
+  for(const[dr,dc] of DIRS){
+    let rr=pr+dr,cc=pc+dc; const line=[];
+    while(inb(rr,cc)&&bd[rr][cc]===o){line.push([rr,cc]);rr+=dr;cc+=dc;}
+    if(inb(rr,cc)&&bd[rr][cc]===me&&line.length) segs.push([[pr,pc],...line,[rr,cc]]);
+  }
+  return segs;
+}
+function legalCellsB(bd,me){
+  const res=[];
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    if(bd[r][c]!==EMPTY) continue;
+    if(flipsFrom(bd,me,r,c).size) res.push([r,c]);
+  }
+  return res;
+}
+function legalCells(me){ return legalCellsB(board,me).map(([r,c])=>r+','+c); }
+function count(p){let n=0;for(const row of board)for(const v of row)if(v===p)n++;return n;}
+
+/* ---------- AI (placement only; knows the forecast rotation) ---------- */
+function cloneB(bd){return bd.map(r=>r.slice());}
+function place(bd,me,r,c){
+  const nb=cloneB(bd); nb[r][c]=me;
+  flipsFrom(nb,me,r,c).forEach(k=>{const[a,b]=k.split(',').map(Number); nb[a][b]=me;});
+  return nb;
+}
+function leafEval(bd,me){
+  const o=opp(me); let my=0,op=0,emp=0;
+  for(const row of bd)for(const v of row){ if(v===me)my++; else if(v===o)op++; else emp++; }
+  const mat=my-op;
+  const mob=legalCellsB(bd,me).length - legalCellsB(bd,o).length;
+  let cor=0; for(const[r,c] of [[0,0],[0,7],[7,0],[7,7]]){ if(bd[r][c]===me)cor++; else if(bd[r][c]===o)cor--; }
+  let a,b;
+  if(emp>24){a=1;b=3;} else if(emp>8){a=1.6;b=2;} else {a=5;b=1;}
+  return a*mat + b*mob + 2.2*cor;
+}
+/* --- さいきょう用の強化評価・探索 --- */
+const POSW=[
+ [40,-8,10, 6, 6,10,-8,40],
+ [-8,-12, 1, 1, 1, 1,-12,-8],
+ [10,  1, 4, 2, 2, 4,  1,10],
+ [ 6,  1, 2, 1, 1, 2,  1, 6],
+ [ 6,  1, 2, 1, 1, 2,  1, 6],
+ [10,  1, 4, 2, 2, 4,  1,10],
+ [-8,-12, 1, 1, 1, 1,-12,-8],
+ [40,-8,10, 6, 6,10,-8,40]];
+function evalStrong(bd,me){
+  const o=opp(me);
+  let my=0,op=0,emp=0,pos=0,frontMe=0,frontOp=0;
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const v=bd[r][c];
+    if(v===EMPTY){emp++;continue;}
+    if(v===me){my++;pos+=POSW[r][c];}else{op++;pos-=POSW[r][c];}
+    for(const[dr,dc] of DIRS){const rr=r+dr,cc=c+dc; if(inb(rr,cc)&&bd[rr][cc]===EMPTY){ v===me?frontMe++:frontOp++; break; }}
+  }
+  const mob=legalCellsB(bd,me).length-legalCellsB(bd,o).length;
+  const mat=my-op, frontier=frontOp-frontMe;
+  if(emp>32) return 0.35*pos + 4*mob + 1.5*frontier - 0.5*mat;
+  if(emp>12) return 0.45*pos + 3*mob + 1.2*frontier + 0.4*mat;
+  return 0.2*pos + 1.5*mob + 6*mat;
+}
+function orderedMoves(bd,me){
+  return legalCellsB(bd,me)
+    .map(([r,c])=>({r,c,s:POSW[r][c]+flipsFrom(bd,me,r,c).size}))
+    .sort((a,b)=>b.s-a.s);
+}
+function countEmpty(bd){let n=0;for(const row of bd)for(const v of row)if(v===EMPTY)n++;return n;}
+function cntOf(bd,p){let n=0;for(const row of bd)for(const v of row)if(v===p)n++;return n;}
+/* 終局まで正確に読み切る（旋回は考慮外＝残り手数の運要素として扱う） */
+function solveExact(bd,me,alpha,beta){
+  const mv=legalCellsB(bd,me);
+  if(!mv.length){
+    const o=opp(me);
+    if(!legalCellsB(bd,o).length) return cntOf(bd,me)-cntOf(bd,o);
+    return -solveExact(bd,o,-beta,-alpha);
+  }
+  let best=-Infinity;
+  for(const[r,c] of mv){
+    const val=-solveExact(place(bd,me,r,c),opp(me),-beta,-alpha);
+    if(val>best)best=val;
+    if(best>alpha)alpha=best;
+    if(alpha>=beta)break;
+  }
+  return best;
+}
+function negamaxStrong(bd,me,d,ml,rot,alpha,beta){
+  if(d<=0)return evalStrong(bd,me);
+  const mv=orderedMoves(bd,me);
+  if(!mv.length){const o=opp(me);
+    if(!legalCellsB(bd,o).length)return(cntOf(bd,me)-cntOf(bd,o))*1000;
+    return -negamaxStrong(bd,o,d-1,ml,rot,-beta,-alpha);}
+  let best=-Infinity;
+  for(const m of mv){
+    let nb=place(bd,me,m.r,m.c),m2=ml-1,n2=rot;
+    if(m2<=0&&n2){n2.forEach(x=>rotateCellsInto(nb,x.cells,x.dir));m2=rotEvery;n2=null;}
+    const val=-negamaxStrong(nb,opp(me),d-1,m2,n2,-beta,-alpha);
+    if(val>best)best=val;
+    if(best>alpha)alpha=best;
+    if(alpha>=beta)break;
+  }
+  return best;
+}
+/* movesLeft = placements until system rotation; rot = the forecast rotation */
+function negamax(bd,me,d,movesLeft,rot,alpha,beta){
+  if(d<=0) return leafEval(bd,me);
+  const mv=legalCellsB(bd,me);
+  if(!mv.length){
+    const o=opp(me);
+    if(!legalCellsB(bd,o).length){
+      let my=0,op=0; for(const row of bd)for(const v of row){if(v===me)my++;else if(v===o)op++;}
+      return (my-op)*1000;
+    }
+    return -negamax(bd,o,d-1,movesLeft,rot,-beta,-alpha);
+  }
+  let best=-Infinity;
+  for(const [r,c] of mv){
+    let nb=place(bd,me,r,c), ml=movesLeft-1, nrot=rot;
+    if(ml<=0 && nrot){ nrot.forEach(x=>rotateCellsInto(nb,x.cells,x.dir)); ml=rotEvery; nrot=null; } // future rotations unknown
+    const val=-negamax(nb,opp(me),d-1,ml,nrot,-beta,-alpha);
+    if(val>best) best=val;
+    if(best>alpha) alpha=best;
+    if(alpha>=beta) break;
+  }
+  return best;
+}
+function aiChooseMove(){
+  const mv=legalCellsB(board,aiColor);
+  if(!mv.length) return null;
+  const depth=LEVEL_DEPTH[aiLevel];
+  if(depth===0) return mv[(Math.random()*mv.length)|0];          // よわい: ランダム
+  const movesLeft=rotEvery-(moveCount%rotEvery);
+  if(aiLevel===4){                                               // さいきょう
+    const emp=countEmpty(board);
+    let best=null,bs=-Infinity;
+    for(const m of orderedMoves(board,aiColor)){
+      let nb=place(board,aiColor,m.r,m.c), ml=movesLeft-1, rot=nextRots.length?nextRots:null;
+      if(ml<=0 && rot){ rot.forEach(x=>rotateCellsInto(nb,x.cells,x.dir)); ml=rotEvery; rot=null; }
+      const v = emp<=SOLVE_AT
+        ? -solveExact(nb,opp(aiColor),-Infinity,Infinity)*1000
+        : -negamaxStrong(nb,opp(aiColor),depth-1,ml,rot,-Infinity,Infinity);
+      if(v>bs){bs=v; best=[m.r,m.c];}
+    }
+    return best;
+  }
+  let best=null,bs=-Infinity;
+  for(const [r,c] of mv){
+    let nb=place(board,aiColor,r,c), ml=movesLeft-1, rot=nextRots.length?nextRots:null;
+    if(ml<=0 && rot){ rot.forEach(x=>rotateCellsInto(nb,x.cells,x.dir)); ml=rotEvery; rot=null; }
+    const val=(depth<=1? leafEval(nb,aiColor)
+                       : -negamax(nb,opp(aiColor),depth-1,ml,rot,-Infinity,Infinity))
+              + Math.random()*0.02;
+    if(val>bs){bs=val; best=[r,c];}
+  }
+  return best;
+}
+
+/* ---------- rendering ---------- */
+const grid=document.getElementById('grid');
+function build(){
+  grid.innerHTML='';
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const cell=document.createElement('div');
+    cell.className='cell'; cell.dataset.d=depth(r,c); cell.dataset.r=r; cell.dataset.c=c;
+    const disc=document.createElement('div'); disc.className='disc';
+    cell.appendChild(disc);
+    cell.addEventListener('click',()=>onCell(r,c));
+    grid.appendChild(cell);
+  }
+}
+function cellAt(r,c){return grid.children[r*8+c];}
+const WARN_COLORS={3:'#5a96e6',2:'#e0be46',1:'#eb5a50'};
+const WARN_SOFT={3:'rgba(90,150,230,.30)',2:'rgba(224,190,70,.32)',1:'rgba(235,90,80,.34)'};
+function arrowMap(ring,dir){
+  const lo=ring, hi=7-ring, mid=(lo+hi)>>1, m={};
+  const put=(r,c,cls)=>{const k=r+','+c; if(!m[k]) m[k]=cls;};
+  if(dir==='cw'){ put(lo,mid,'arrR'); put(mid,hi,'arrD'); put(hi,mid+1<=hi?mid+1:mid,'arrL'); put(mid+1<=hi?mid+1:mid,lo,'arrU'); }
+  else{ put(lo,mid+1<=hi?mid+1:mid,'arrL'); put(mid+1<=hi?mid+1:mid,hi,'arrU'); put(hi,mid,'arrR'); put(mid,lo,'arrD'); }
+  return m;
+}
+function blockArrows(nr){
+  const m={}, cells=nr.cells, n=cells.length;
+  for(let i=0;i<n;i++){
+    const j= nr.dir==='cw'? (i+1)%n : (i-1+n)%n;
+    const dr=cells[j][0]-cells[i][0], dc=cells[j][1]-cells[i][1];
+    m[cells[i][0]+','+cells[i][1]] = dc>0?'arrR':dc<0?'arrL':dr>0?'arrD':'arrU';
+  }
+  return m;
+}
+function render(){
+  const legal = !over && !busy && !(aiEnabled&&player===aiColor) ? new Set(legalCells(player)) : new Set();
+  const left=rotEvery-(moveCount%rotEvery);
+  const lvl=Math.min(left,3);
+  const warnCls = 'warn'+lvl, wc=WARN_COLORS[lvl];
+  let warnMap=null, arrows={};
+  if(!over && nextRots.length){
+    warnMap=new Map();
+    for(const nr of nextRots){
+      nr.cells.forEach(([r,c])=>warnMap.set(r+','+c, nr.type));
+      Object.assign(arrows, nr.type==='ring'? arrowMap(nr.ring,nr.dir) : blockArrows(nr));
+    }
+  }
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const cell=cellAt(r,c), disc=cell.firstChild, key=r+','+c;
+    cell.classList.remove('warn1','warn2','warn3','bw','arrR','arrL','arrU','arrD');
+    if(warnMap && warnMap.has(key)){
+      cell.classList.add(warnCls);
+      cell.style.setProperty('--wc',wc);
+      if(warnMap.get(key)==='block'){
+        cell.classList.add('bw');
+        cell.style.setProperty('--wcs',WARN_SOFT[lvl]);
+      }
+      if(arrows[key]) cell.classList.add(arrows[key]);
+    }
+    if(disc.dataset.anim==='1'){ cell.classList.toggle('legal', legal.has(key)); continue; }
+    disc.style.transform=''; disc.style.transition='';
+    disc.className='disc'+(board[r][c]?' show '+(board[r][c]===BLACK?'b':'w'):'');
+    cell.classList.toggle('legal', legal.has(key));
+    cell.classList.remove('ring');
+  }
+  document.getElementById('sb').textContent=count(BLACK);
+  document.getElementById('sw').textContent=count(WHITE);
+  document.getElementById('turn').innerHTML= over? 'game over'
+    : `手番 <b>${glyph(player)}</b><br>置く`;
+  renderControls();
+}
+const controls=document.getElementById('controls');
+function renderControls(){
+  if(over){controls.innerHTML='';return;}
+  const left=rotEvery-(moveCount%rotEvery);
+  const wc = left>=3? '#5a96e6' : left===2? '#e0be46' : '#eb5a50';
+  const what=nextRots.length
+    ? nextRots.map(nr=>`<b>${nr.type==='ring'?'◎':'▣'} ${rotLabel(nr)} ${nr.dir==='cw'?'↻':'↺'}</b>`).join(' + ')
+    : '—';
+  controls.innerHTML=`
+    <div class="phase-label"><span class="dot" style="background:${wc};box-shadow:0 0 7px ${wc}"></span>次の旋回 — あと <b style="color:${wc}">${left}</b> 手で ${what}</div>
+    <div class="hint">置けるのは<b>1枚以上返せるマス</b>のみ（オセロ標準）。${rotEvery}手ごとに盤が自動で旋回します。</div>`;
+}
+
+/* ---------- animations ---------- */
+function animateRotation(cells,dir,done){
+  const n=cells.length;
+  const rect=cells.map(([r,c])=>cellAt(r,c).getBoundingClientRect());
+  const moves=[];
+  for(let i=0;i<n;i++){
+    const [r,c]=cells[i];
+    if(board[r][c]===EMPTY) continue;
+    const j = dir==='cw' ? (i+1)%n : (i-1+n)%n;
+    moves.push({disc:cellAt(r,c).firstChild, dx:rect[j].left-rect[i].left, dy:rect[j].top-rect[i].top});
+  }
+  cells.forEach(([r,c])=>cellAt(r,c).classList.add('ring'));
+  const clearRing=()=>cells.forEach(([r,c])=>cellAt(r,c).classList.remove('ring'));
+  if(!moves.length){ setTimeout(()=>{clearRing(); done();}, ROT_MS); return; }
+  moves.forEach(m=>{m.disc.dataset.anim='1'; m.disc.style.zIndex='4'; m.disc.style.transition='transform '+ROT_MS+'ms cubic-bezier(.42,0,.2,1)';});
+  void grid.offsetWidth;
+  moves.forEach(m=>{ m.disc.style.transform=`translate(${m.dx}px,${m.dy}px)`; });
+  setTimeout(()=>{
+    moves.forEach(m=>{ m.disc.style.transition='none'; m.disc.style.transform=''; m.disc.style.zIndex=''; delete m.disc.dataset.anim; });
+    clearRing(); done();
+  }, ROT_MS+20);
+}
+function animateFlips(flipped, before, then){
+  if(!flipped.size){ then(); return; }
+  flipped.forEach(key=>{
+    const [r,c]=key.split(',').map(Number);
+    const disc=cellAt(r,c).firstChild;
+    const oldP=before[r][c], newP=board[r][c];
+    disc.dataset.anim='1';
+    disc.style.transition='none';
+    disc.className='disc show '+(oldP===BLACK?'b':'w');
+    disc.style.transform='scaleX(1)';
+    void disc.offsetWidth;
+    disc.style.transition='transform '+(FLIP_MS/2)+'ms ease-in';
+    disc.style.transform='scaleX(0.05)';
+    setTimeout(()=>{
+      disc.className='disc show '+(newP===BLACK?'b':'w');
+      disc.style.transition='transform '+(FLIP_MS/2)+'ms ease-out';
+      disc.style.transform='scaleX(1)';
+    }, FLIP_MS/2);
+  });
+  setTimeout(()=>{
+    flipped.forEach(key=>{const [r,c]=key.split(',').map(Number); const disc=cellAt(r,c).firstChild; disc.style.transition=''; disc.style.transform=''; delete disc.dataset.anim;});
+    then();
+  }, FLIP_MS+40);
+}
+function highlightSegments(segs){
+  const keys=new Set();
+  segs.forEach(s=>s.forEach(([r,c])=>keys.add(r+','+c)));
+  keys.forEach(k=>{const[r,c]=k.split(',').map(Number); cellAt(r,c).classList.add('trace');});
+  setTimeout(()=>keys.forEach(k=>{const[r,c]=k.split(',').map(Number); cellAt(r,c).classList.remove('trace');}), FLIP_MS+650);
+}
+
+/* ---------- turn flow ---------- */
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;[a[i],a[j]]=[a[j],a[i]];}return a;}
+function ringCandidates(used){
+  return shuffle([0,1,2,3]
+    .map(d=>({type:'ring', ring:d, cells:ringCellsCW(d)}))
+    .filter(e=>e.cells.some(([r,c])=>board[r][c]!==EMPTY))
+    .filter(e=>!e.cells.some(([r,c])=>used.has(r+','+c))));
+}
+function blockCandidates(used){
+  const out=[];
+  for(let r=0;r<7;r++)for(let c=0;c<7;c++){
+    const cells=blockCellsCW(r,c);
+    if(!cells.some(([a,b])=>board[a][b]!==EMPTY)) continue;
+    if(cells.some(([a,b])=>used.has(a+','+b))) continue;
+    out.push({type:'block', r, c, cells});
+  }
+  return shuffle(out);
+}
+function rollRotation(){
+  const used=new Set(); nextRots=[];
+  const take=e=>{ e.dir=Math.random()<.5?'cw':'ccw'; e.cells.forEach(([r,c])=>used.add(r+','+c)); nextRots.push(e); };
+  for(let i=0;i<rotCount;i++){
+    let pick=null;
+    if(rotType==='ring') pick=ringCandidates(used)[0];
+    else if(rotType==='block') pick=blockCandidates(used)[0];
+    else{ // mix: 箇所ごとにタイプを抽選、無ければもう一方
+      const first=Math.random()<.5?'ring':'block';
+      pick=(first==='ring'? ringCandidates(used)[0] : blockCandidates(used)[0])
+        || (first==='ring'? blockCandidates(used)[0] : ringCandidates(used)[0]);
+    }
+    if(!pick) break;
+    take(pick);
+  }
+  if(!nextRots.length){ const e={type:'block', r:3, c:3, cells:blockCellsCW(3,3)}; take(e); }
+  nextRots.sort((a,b)=>a.cells.length===b.cells.length? 0 : b.cells.length-a.cells.length);
+}
+function onCell(r,c){
+  if(over||busy) return;
+  if(aiEnabled&&player===aiColor) return;
+  if(!legalCells(player).includes(r+','+c)) return;
+  playPlacement(r,c,glyph(player));
+}
+function playPlacement(r,c,who){
+  busy=true;
+  board[r][c]=player;
+  const before=board.map(row=>row.slice());
+  const segs=linesFrom(board,player,r,c);
+  const flipped=flipsFrom(board,player,r,c);
+  flipped.forEach(k=>{const[a,b]=k.split(',').map(Number); board[a][b]=player;});
+  render();
+  highlightSegments(segs);
+  const msg = flipped.size? `${who} (${r+1},${c+1}) → ${flipped.size}枚獲得。` : `${who} (${r+1},${c+1}) → 返りなし。`;
+  animateFlips(flipped, before, ()=>afterPlacement(msg));
+}
+function afterPlacement(msg){
+  moveCount++;
+  if(moveCount%rotEvery===0 && nextRots.length){
+    const desc=nextRots.map(nr=>`${nr.type==='ring'?'◎':'▣'}${rotLabel(nr)} ${nr.dir==='cw'?'↻右':'↺左'}`).join('、');
+    log(`${msg} ／ <b>盤が旋回！ ${desc}</b>`);
+    const queue=nextRots.slice();
+    const fireNext=()=>{
+      if(!queue.length){ rollRotation(); render(); endTurn(msg); return; }
+      const nr=queue.shift();
+      animateRotation(nr.cells,nr.dir,()=>{ rotateCellsInto(board,nr.cells,nr.dir); render(); setTimeout(fireNext,120); });
+    };
+    setTimeout(fireNext, 300);
+  } else {
+    endTurn(msg);
+  }
+}
+function endTurn(msg){
+  player=opp(player);
+  if(legalCells(player).length===0){
+    if(legalCells(opp(player)).length===0){ busy=false; log(msg); return gameOver(); }
+    log(`${msg} ／ ${glyph(player)} は置ける場所がなくパス。`);
+    player=opp(player);
+  } else {
+    log(msg);
+  }
+  busy=false; render();
+  maybeAI();
+}
+function maybeAI(){
+  if(over || !aiEnabled || player!==aiColor) return;
+  busy=true; render();
+  log(`${glyph(aiColor)}(AI) が考え中…`);
+  setTimeout(()=>{
+    const mv=aiChooseMove();
+    if(!mv){ busy=false; endTurn(`${glyph(aiColor)}(AI) はパス`); return; }
+    playPlacement(mv[0], mv[1], `${glyph(aiColor)}(AI)`);
+  }, 430);
+}
+function gameOver(){
+  over=true;
+  const b=count(BLACK), w=count(WHITE);
+  const big=document.getElementById('over-big'), sub=document.getElementById('over-sub');
+  const bl=aiEnabled? (humanColor===BLACK?'あなた ●':'AI ●') : '● 先手';
+  const wl=aiEnabled? (humanColor===WHITE?'あなた ○':'AI ○') : '○ 後手';
+  if(b===w){big.textContent='引き分け'; big.style.color='var(--text)';}
+  else{ big.textContent=(b>w?bl:wl)+' の勝ち'; big.style.color='var(--amber)'; }
+  sub.textContent=`● ${b} — ${w} ○`;
+  document.getElementById('over').classList.add('show');
+  render();
+}
+function log(t){document.getElementById('log').innerHTML=t;}
+function setMode(ai){
+  aiEnabled=ai;
+  document.getElementById('m-ai').classList.toggle('on',ai);
+  document.getElementById('m-pvp').classList.toggle('on',!ai);
+  document.getElementById('levelbar').style.display= ai? '' : 'none';
+  document.getElementById('sidebar').style.display= ai? '' : 'none';
+}
+function setSide(n){
+  humanColor = n===1? BLACK : WHITE;
+  aiColor = opp(humanColor);
+  document.getElementById('sd1').classList.toggle('on',n===1);
+  document.getElementById('sd2').classList.toggle('on',n===2);
+}
+function startGame(){
+  demoStop();
+  document.getElementById('setup').style.display='none';
+  document.getElementById('game').style.display='';
+  reset();
+}
+function showSetup(){
+  document.getElementById('game').style.display='none';
+  document.getElementById('over').classList.remove('show');
+  document.getElementById('setup').style.display='';
+  demoStart();
+}
+function setLevel(n){
+  aiLevel=n;
+  for(let i=1;i<=4;i++) document.getElementById('lv'+i).classList.toggle('on',i===n);
+}
+function setRotType(t){
+  rotType=t;
+  document.getElementById('rt-ring').classList.toggle('on',t==='ring');
+  document.getElementById('rt-block').classList.toggle('on',t==='block');
+  document.getElementById('rt-mix').classList.toggle('on',t==='mix');
+  if(board){ rollRotation(); render(); }
+}
+function setRotEvery(n){
+  rotEvery=n;
+  for(let i=1;i<=5;i++) document.getElementById('re'+i).classList.toggle('on',i===n);
+  if(board) render();
+}
+function setRotCount(n){
+  rotCount=n;
+  for(let i=1;i<=4;i++) document.getElementById('rc'+i).classList.toggle('on',i===n);
+  if(board){ rollRotation(); render(); }
+}
+function reset(){
+  board=Array.from({length:8},()=>Array(8).fill(EMPTY));
+  board[3][3]=WHITE; board[3][4]=BLACK; board[4][3]=BLACK; board[4][4]=WHITE;
+  player=BLACK; over=false; busy=false; moveCount=0;
+  rollRotation();
+  document.getElementById('over').classList.remove('show');
+  log(aiEnabled? (humanColor===BLACK? `あなたは先手 ●。返せるマス（光点）に置く。${rotEvery}手ごとに盤が自動旋回。`
+                                     : 'あなたは後手 ○。AIが先手 ● で始めます。')
+              : `先手 ● から。返せるマス（光点）に置く。${rotEvery}手ごとに盤が自動旋回。`);
+  render();
+  maybeAI();
+}
+
+
+/* ---------- 設定画面の旋回デモ ---------- */
+const demogrid=document.getElementById('demogrid');
+let demoBoard=null, demoTimer=null, demoBusy=false, demoMixFlip=false;
+function demoBuild(){
+  demogrid.innerHTML='';
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const cell=document.createElement('div');
+    cell.className='cell'; cell.dataset.d=depth(r,c);
+    const disc=document.createElement('div'); disc.className='disc';
+    cell.appendChild(disc);
+    demogrid.appendChild(cell);
+  }
+}
+function demoCellAt(r,c){return demogrid.children[r*8+c];}
+function demoInit(){
+  demoBoard=Array.from({length:8},()=>Array(8).fill(EMPTY));
+  // 見栄え用の駒配置
+  const B=BLACK,W=WHITE;
+  const put=[[0,0,B],[0,3,W],[0,6,B],[2,7,W],[5,7,B],[7,7,W],[7,4,B],[7,1,W],[4,0,B],[2,0,W],
+             [2,2,B],[2,5,W],[5,2,W],[5,5,B],[3,3,W],[3,4,B],[4,3,B],[4,4,W]];
+  put.forEach(([r,c,p])=>demoBoard[r][c]=p);
+  demoRender();
+}
+function demoRender(){
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const cell=demoCellAt(r,c), disc=cell.firstChild;
+    if(disc.dataset.anim!=='1'){
+      disc.style.transform=''; disc.style.transition='';
+      disc.className='disc'+(demoBoard[r][c]?' show '+(demoBoard[r][c]===BLACK?'b':'w'):'');
+    }
+    cell.classList.remove('warn1','warn2','warn3','bw','arrR','arrL','arrU','arrD');
+  }
+}
+function demoPickEntry(){
+  let t=rotType;
+  if(t==='mix'){ demoMixFlip=!demoMixFlip; t=demoMixFlip?'ring':'block'; }
+  if(t==='ring'){
+    const cand=[0,1,2,3].filter(d=>ringCellsCW(d).some(([r,c])=>demoBoard[r][c]!==EMPTY));
+    const ring=cand[(Math.random()*cand.length)|0];
+    return {type:'ring', ring, cells:ringCellsCW(ring), dir:Math.random()<.5?'cw':'ccw'};
+  }
+  const cand=[];
+  for(let r=0;r<7;r++)for(let c=0;c<7;c++){
+    const cells=blockCellsCW(r,c);
+    if(cells.some(([a,b])=>demoBoard[a][b]!==EMPTY)) cand.push({type:'block', r, c, cells});
+  }
+  const e=cand[(Math.random()*cand.length)|0];
+  e.dir=Math.random()<.5?'cw':'ccw';
+  return e;
+}
+function demoTick(){
+  if(demoBusy||!demoBoard) return;
+  demoBusy=true;
+  const e=demoPickEntry();
+  const arrows = e.type==='ring'? arrowMap(e.ring,e.dir) : blockArrows(e);
+  document.getElementById('demolabel').innerHTML=
+    `${e.type==='ring'?'◎ リング':'▣ 4マス'} が ${e.dir==='cw'?'右↻':'左↺'} に回転`;
+  e.cells.forEach(([r,c])=>{
+    const cell=demoCellAt(r,c);
+    cell.classList.add('warn1');
+    cell.style.setProperty('--wc',WARN_COLORS[1]);
+    if(e.type==='block'){ cell.classList.add('bw'); cell.style.setProperty('--wcs',WARN_SOFT[1]); }
+    const k=r+','+c;
+    if(arrows[k]) cell.classList.add(arrows[k]);
+  });
+  setTimeout(()=>{
+    // slide discs
+    const cells=e.cells, n=cells.length;
+    const rect=cells.map(([r,c])=>demoCellAt(r,c).getBoundingClientRect());
+    const moves=[];
+    for(let i=0;i<n;i++){
+      const [r,c]=cells[i];
+      if(demoBoard[r][c]===EMPTY) continue;
+      const j = e.dir==='cw'? (i+1)%n : (i-1+n)%n;
+      moves.push({disc:demoCellAt(r,c).firstChild, dx:rect[j].left-rect[i].left, dy:rect[j].top-rect[i].top});
+    }
+    moves.forEach(m=>{m.disc.dataset.anim='1'; m.disc.style.zIndex='4'; m.disc.style.transition='transform '+ROT_MS+'ms cubic-bezier(.42,0,.2,1)';});
+    void demogrid.offsetWidth;
+    moves.forEach(m=>{ m.disc.style.transform=`translate(${m.dx}px,${m.dy}px)`; });
+    setTimeout(()=>{
+      moves.forEach(m=>{ m.disc.style.transition='none'; m.disc.style.transform=''; m.disc.style.zIndex=''; delete m.disc.dataset.anim; });
+      rotateCellsInto(demoBoard,e.cells,e.dir);
+      demoRender();
+      demoBusy=false;
+    }, ROT_MS+40);
+  }, 850);
+}
+function demoStart(){
+  if(!demoBoard) demoInit(); else demoRender();
+  if(demoTimer) clearInterval(demoTimer);
+  demoTimer=setInterval(demoTick, 2100);
+  demoTick();
+}
+function demoStop(){
+  if(demoTimer){ clearInterval(demoTimer); demoTimer=null; }
+  demoBusy=false;
+}
+
+build(); demoBuild(); demoStart();
+</script>
+</body>
+</html>
