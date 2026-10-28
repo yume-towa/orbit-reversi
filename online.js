@@ -8,6 +8,7 @@
      seed         … 旋回の抽選に使う乱数のタネ（両者の画面で同じ旋回にするため）
      moves/{n}    … n手目（0始まり）の着手 {r, c, by}
                     パスは記録しない（同じ盤面からは両者の画面で同じようにパスと判定されるため）
+     presence/{uid} … 対局中に部屋にいる印（通信が切れるとサーバーが自動で消す）
 */
 const FIREBASE_CONFIG={
   apiKey:'AIzaSyAF7A6RC5Ewf-1Mfwx-k_IZY9lvNbnAL48',
@@ -142,17 +143,53 @@ function onlineBegin(){
     online.pending.set(Number(s.key), s.val());
     onlinePump();
   });
+  onlinePresence();
 }
 function onlineLeave(){
   if(!online) return;
   const {ref,room,uid}=online;
   ref.child('guest').off(); ref.child('moves').off();
+  if(room.guest){   // 在室の印を消して、相手に退出を知らせる
+    const me=ref.child('presence/'+uid);
+    me.onDisconnect().cancel(); me.remove().catch(()=>{});
+    ref.child('presence/'+(uid===room.host? room.guest : room.host)).off();
+    if(online.connCb) firebase.database().ref('.info/connected').off('value', online.connCb);
+  }
   if(uid===room.host && !room.guest) ref.remove().catch(()=>{});   // 相手が来る前なら部屋ごと消す
   online=null; onlineColor=0;
   document.body.classList.remove('online');
-  hideWaiting();
+  hideWaiting(); onlineStatus();
 }
 function onlineCancel(){ onlineLeave(); onlineMsg(''); }
+
+/* ---------- 接続状態（自分・相手の通信切れの表示） ---------- */
+function onlinePresence(){
+  const {ref,uid,room}=online;
+  const me=ref.child('presence/'+uid);
+  // 接続（再接続）のたびに、切れたら消える印を書き直す
+  online.connCb=firebase.database().ref('.info/connected').on('value', s=>{
+    if(!online || online.ref!==ref) return;
+    online.connected=s.val()===true;
+    if(online.connected){ online.wasConnected=true; me.onDisconnect().remove().catch(()=>{}); me.set(true).catch(()=>{}); }
+    onlineStatus();
+  });
+  ref.child('presence/'+(uid===room.host? room.guest : room.host)).on('value', s=>{
+    if(!online || online.ref!==ref) return;
+    online.oppHere=s.val()===true;
+    if(online.oppHere) online.oppSeen=true;   // 一度も来ていないうちは「切れた」と表示しない
+    onlineStatus();
+  });
+}
+function onlineStatus(){
+  let t='';
+  if(online && onlineColor){
+    if(online.wasConnected && !online.connected) t='通信が切れています。再接続を待っています…';
+    else if(online.oppSeen && !online.oppHere)
+      t= over? '相手は部屋から抜けました。' : '相手との接続が切れました。戻ってくるのを待つか、「設定へ」で抜けてください。';
+  }
+  const el=document.getElementById('online-status');
+  el.textContent=t; el.style.display= t? '' : 'none';
+}
 
 /* ---------- 着手のやり取り ---------- */
 /* 自分の手を送る。書き込むと自分の画面にもすぐ「届いた手」として通知され、onlinePump で進む */

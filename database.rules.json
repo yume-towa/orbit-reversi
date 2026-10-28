@@ -30,6 +30,12 @@
             "$other": { ".validate": false }
           }
         },
+        "presence": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && (data.parent().parent().child('host').val() === auth.uid || data.parent().parent().child('guest').val() === auth.uid)",
+            ".validate": "newData.isBoolean()"
+          }
+        },
         "$other": { ".validate": false }
       }
     }
