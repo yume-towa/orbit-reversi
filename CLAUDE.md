@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 - 旋回リバーシ:一定手数ごとに盤の一部(リング/4マス)が自動旋回するオセロ変種。
-- 現在は `index.html` 1ファイルに HTML・CSS・JavaScript がすべて入っている。ビルド不要。
+- ゲーム本体は `index.html`(HTML・CSS・JavaScript)。オンライン対戦の通信処理は `online.js`、Firebase Realtime Database のアクセスルールは `database.rules.json`。ビルド不要。
 - 公開先は GitHub Pages(main ブランチのルートをそのまま配信)。
 
 ## 守ってほしいこと
@@ -19,3 +19,7 @@
 - rendering / animations:盤面描画、旋回・反転アニメーション、旋回予告の表示
 - turn flow:手番進行、旋回の抽選(rollRotation)、パス・終局判定
 - 設定画面の旋回デモ
+
+## オンライン対戦(online.js)
+- Firebase はオンラインを選んだときだけ読み込み、匿名ログインする
+- 部屋の作成・参加、着手の送受信。旋回は部屋で共有したタネ(`reset(seed)`)で両者の画面に同じものを起こす
