@@ -1,0 +1,37 @@
+{
+  "rules": {
+    "rooms": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('host').val() === auth.uid) || (!newData.exists() && data.child('host').val() === auth.uid && !data.child('guest').exists()))",
+        ".validate": "$code.matches(/^[2-9A-HJ-NP-Z]{5}$/) && newData.hasChildren(['host', 'hostColor', 'settings', 'seed', 'createdAt'])",
+        "host": { ".validate": "newData.isString()" },
+        "hostColor": { ".validate": "newData.val() === 1 || newData.val() === 2" },
+        "seed": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 4294967296" },
+        "createdAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+        "settings": {
+          ".validate": "newData.hasChildren(['rotType', 'rotCount', 'rotEvery'])",
+          "rotType": { ".validate": "newData.val() === 'ring' || newData.val() === 'block' || newData.val() === 'mix'" },
+          "rotCount": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 4" },
+          "rotEvery": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 5" },
+          "$other": { ".validate": false }
+        },
+        "guest": {
+          ".write": "auth != null && !data.exists() && newData.val() === auth.uid && data.parent().child('host').val() !== auth.uid",
+          ".validate": "newData.isString()"
+        },
+        "moves": {
+          "$n": {
+            ".write": "auth != null && !data.exists() && (data.parent().parent().child('host').val() === auth.uid || data.parent().parent().child('guest').val() === auth.uid)",
+            ".validate": "$n.matches(/^[0-9]{1,2}$/) && newData.hasChildren(['r', 'c', 'by']) && newData.child('by').val() === auth.uid",
+            "r": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7" },
+            "c": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7" },
+            "by": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

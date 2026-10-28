@@ -159,6 +159,19 @@
   .segbtn.lv{flex:1}
   #levelbar{margin-top:8px}
 
+  /* オンライン対戦 */
+  .codein{flex:1; min-width:0; appearance:none; background:var(--panel2); border:1px solid var(--line); border-radius:9px;
+    color:var(--text); padding:8px 12px; font-family:var(--mono); font-size:14px; letter-spacing:.2em; text-transform:uppercase}
+  .codein:focus{outline:none; border-color:var(--amber)}
+  .joinbtn{border:1px solid var(--line); border-radius:9px; background:var(--panel2)}
+  .online-wait{text-align:center; margin-top:4px}
+  .online-wait .code{font-family:var(--mono); font-size:28px; font-weight:600; letter-spacing:.3em; color:#f0d9a4; margin:4px 0 6px}
+  .online-wait .url{font-family:var(--mono); font-size:11px; color:var(--muted); word-break:break-all; margin-bottom:10px}
+  .online-msg{text-align:center; margin-top:10px; min-height:1em}
+  .online-msg.err{color:#eb8a80}
+  .setup-panel.waiting .setup-row, .setup-panel.waiting .startbtn{display:none}
+  body.online .online-hide{display:none}
+
   .over{position:absolute; inset:9px; display:none; align-items:center; justify-content:center; flex-direction:column; gap:6px;
     background:rgba(12,16,22,.82); backdrop-filter:blur(3px); border-radius:6px; text-align:center; z-index:5}
   .over.show{display:flex}
@@ -186,8 +199,9 @@
       <div class="setup-row">
         <span class="setup-label">対戦形式</span>
         <div class="seg" style="flex:1">
-          <button id="m-pvp" class="segbtn lv" onclick="setMode(false)">対人</button>
-          <button id="m-ai" class="segbtn lv on" onclick="setMode(true)">AI対戦</button>
+          <button id="m-pvp" class="segbtn lv" onclick="setMode('pvp')">対人</button>
+          <button id="m-ai" class="segbtn lv on" onclick="setMode('ai')">AI対戦</button>
+          <button id="m-online" class="segbtn lv" onclick="setMode('online')">オンライン</button>
         </div>
       </div>
 
@@ -239,7 +253,26 @@
         </div>
       </div>
 
-      <button class="startbtn" onclick="startGame()">対戦スタート</button>
+      <button class="startbtn" id="startbtn" onclick="onStart()">対戦スタート</button>
+
+      <!-- オンライン対戦：コードを受け取った人の参加欄と、部屋を作った人の待機表示 -->
+      <div class="setup-row" id="joinbar" style="display:none;margin:14px 0 0">
+        <span class="setup-label">部屋に参加</span>
+        <input id="join-code" class="codein" maxlength="5" placeholder="コード" autocomplete="off" spellcheck="false">
+        <button class="segbtn joinbtn" onclick="onlineJoin()">参加</button>
+      </div>
+      <div class="online-wait" id="online-wait" style="display:none">
+        <div class="hint">部屋コード</div>
+        <div class="code" id="wait-code"></div>
+        <div class="url" id="wait-url"></div>
+        <div class="row" style="justify-content:center;margin-bottom:8px">
+          <button class="reset" onclick="onlineCopyUrl()">招待URLをコピー</button>
+          <button class="reset" onclick="onlineCancel()">キャンセル</button>
+        </div>
+        <div class="hint">相手の参加を待っています…</div>
+      </div>
+      <div class="hint online-msg" id="online-msg"></div>
+
       <div class="hint" style="text-align:center;margin-top:10px">設定した手数ごとに盤が自動で旋回。返せるマスに置くだけ。</div>
     </div>
   </div>
@@ -260,7 +293,7 @@
       <div class="big" id="over-big"></div>
       <div class="sub" id="over-sub"></div>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="reset" onclick="reset()">もう一度</button>
+        <button class="reset online-hide" onclick="reset()">もう一度</button>
         <button class="reset" onclick="showSetup()">設定へ</button>
       </div>
     </div>
@@ -272,7 +305,7 @@
 
   <div class="bar">
     <button class="reset" onclick="showSetup()">← 設定へ</button>
-    <button class="reset" onclick="reset()">リセット</button>
+    <button class="reset online-hide" onclick="reset()">リセット</button>
   </div>
   </div><!-- /#game -->
 </div>
@@ -294,6 +327,8 @@ let rotCount=1;                  // 1回の旋回で回る箇所の数 (1-3)
 let rotType='ring';              // 'ring'=リング回転 / 'block'=4マス回転
 let aiEnabled=true, aiLevel=2;   // 1=よわい 2=ふつう 3=つよい 4=さいきょう
 let humanColor=BLACK, aiColor=WHITE;
+let playMode='ai';               // 'pvp'=対人 / 'ai'=AI対戦 / 'online'=オンライン対戦
+let onlineColor=0;               // オンライン対戦での自分の色（0=オンライン対戦中ではない）
 const LEVEL_DEPTH={1:0,2:1,3:2,4:4};
 const SOLVE_AT=12;   // さいきょう: 残り空きマスがこれ以下なら終局まで完全読み
 const LEVEL_NAME={1:'よわい',2:'ふつう',3:'つよい',4:'さいきょう'};
@@ -519,7 +554,7 @@ function blockArrows(nr){
   return m;
 }
 function render(){
-  const legal = !over && !busy && !(aiEnabled&&player===aiColor) ? new Set(legalCells(player)) : new Set();
+  const legal = !over && !busy && !(aiEnabled&&player===aiColor) && !(onlineColor&&player!==onlineColor) ? new Set(legalCells(player)) : new Set();
   const left=rotEvery-(moveCount%rotEvery);
   const lvl=Math.min(left,3);
   const warnCls = 'warn'+lvl, wc=WARN_COLORS[lvl];
@@ -552,7 +587,7 @@ function render(){
   document.getElementById('sb').textContent=count(BLACK);
   document.getElementById('sw').textContent=count(WHITE);
   document.getElementById('turn').innerHTML= over? 'game over'
-    : `手番 <b>${glyph(player)}</b><br>置く`;
+    : `手番 <b>${glyph(player)}</b><br>${onlineColor? (player===onlineColor?'あなたの番':'相手の番') : '置く'}`;
   renderControls();
 }
 const controls=document.getElementById('controls');
@@ -666,7 +701,9 @@ function rollRotation(){
 function onCell(r,c){
   if(over||busy) return;
   if(aiEnabled&&player===aiColor) return;
+  if(onlineColor&&player!==onlineColor) return;
   if(!legalCells(player).includes(r+','+c)) return;
+  if(onlineColor) return onlineSend(r,c);   // オンラインでは送信し、届いた手として両者の画面で同じように進める
   playPlacement(r,c,glyph(player));
 }
 function playPlacement(r,c,who){
@@ -708,6 +745,7 @@ function endTurn(msg){
   }
   busy=false; render();
   maybeAI();
+  if(onlineColor) onlinePump();   // 演出中に届いていた次の手を進める
 }
 function maybeAI(){
   if(over || !aiEnabled || player!==aiColor) return;
@@ -723,8 +761,8 @@ function gameOver(){
   over=true;
   const b=count(BLACK), w=count(WHITE);
   const big=document.getElementById('over-big'), sub=document.getElementById('over-sub');
-  const bl=aiEnabled? (humanColor===BLACK?'あなた ●':'AI ●') : '● 先手';
-  const wl=aiEnabled? (humanColor===WHITE?'あなた ○':'AI ○') : '○ 後手';
+  const bl=onlineColor? (onlineColor===BLACK?'あなた ●':'相手 ●') : aiEnabled? (humanColor===BLACK?'あなた ●':'AI ●') : '● 先手';
+  const wl=onlineColor? (onlineColor===WHITE?'あなた ○':'相手 ○') : aiEnabled? (humanColor===WHITE?'あなた ○':'AI ○') : '○ 後手';
   if(b===w){big.textContent='引き分け'; big.style.color='var(--text)';}
   else{ big.textContent=(b>w?bl:wl)+' の勝ち'; big.style.color='var(--amber)'; }
   sub.textContent=`● ${b} — ${w} ○`;
@@ -732,26 +770,30 @@ function gameOver(){
   render();
 }
 function log(t){document.getElementById('log').innerHTML=t;}
-function setMode(ai){
-  aiEnabled=ai;
-  document.getElementById('m-ai').classList.toggle('on',ai);
-  document.getElementById('m-pvp').classList.toggle('on',!ai);
-  document.getElementById('levelbar').style.display= ai? '' : 'none';
-  document.getElementById('sidebar').style.display= ai? '' : 'none';
+function setMode(m){
+  playMode=m; aiEnabled= m==='ai';
+  for(const k of ['pvp','ai','online']) document.getElementById('m-'+k).classList.toggle('on',k===m);
+  document.getElementById('levelbar').style.display= m==='ai'? '' : 'none';
+  document.getElementById('sidebar').style.display= m==='pvp'? 'none' : '';   // オンラインでは部屋を作る人の手番
+  document.getElementById('joinbar').style.display= m==='online'? '' : 'none';
+  document.getElementById('startbtn').textContent= m==='online'? '部屋を作る' : '対戦スタート';
+  document.getElementById('online-msg').textContent='';
 }
+function onStart(){ if(playMode==='online') onlineCreateRoom(); else startGame(); }
 function setSide(n){
   humanColor = n===1? BLACK : WHITE;
   aiColor = opp(humanColor);
   document.getElementById('sd1').classList.toggle('on',n===1);
   document.getElementById('sd2').classList.toggle('on',n===2);
 }
-function startGame(){
+function startGame(seed){
   demoStop();
   document.getElementById('setup').style.display='none';
   document.getElementById('game').style.display='';
-  reset();
+  reset(seed);
 }
 function showSetup(){
+  if(onlineColor) onlineLeave();   // オンライン対戦の部屋から抜ける
   document.getElementById('game').style.display='none';
   document.getElementById('over').classList.remove('show');
   document.getElementById('setup').style.display='';
@@ -792,7 +834,8 @@ function reset(seed){
   player=BLACK; over=false; busy=false; moveCount=0;
   rollRotation();
   document.getElementById('over').classList.remove('show');
-  log(aiEnabled? (humanColor===BLACK? `あなたは先手 ●。返せるマス（光点）に置く。${rotEvery}手ごとに盤が自動旋回。`
+  log(onlineColor? `オンライン対戦：あなたは${onlineColor===BLACK?'先手 ●':'後手 ○'}。${rotEvery}手ごとに盤が自動旋回。`
+    : aiEnabled? (humanColor===BLACK? `あなたは先手 ●。返せるマス（光点）に置く。${rotEvery}手ごとに盤が自動旋回。`
                                      : 'あなたは後手 ○。AIが先手 ● で始めます。')
               : `先手 ● から。返せるマス（光点）に置く。${rotEvery}手ごとに盤が自動旋回。`);
   render();
@@ -900,5 +943,6 @@ function demoStop(){
 
 build(); demoBuild(); demoStart();
 </script>
+<script src="online.js"></script>
 </body>
 </html>
