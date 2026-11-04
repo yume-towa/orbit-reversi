@@ -9,6 +9,7 @@
      moves/{n}    … n手目（0始まり）の着手 {r, c, by}
                     パスは記録しない（同じ盤面からは両者の画面で同じようにパスと判定されるため）
      presence/{uid} … 対局中に部屋にいる印（通信が切れるとサーバーが自動で消す）
+     resign       … 投了した人の匿名ユーザーID（1回だけ書ける）
 */
 const FIREBASE_CONFIG={
   apiKey:'AIzaSyAF7A6RC5Ewf-1Mfwx-k_IZY9lvNbnAL48',
@@ -143,12 +144,17 @@ function onlineBegin(){
     online.pending.set(Number(s.key), s.val());
     onlinePump();
   });
+  ref.child('resign').on('value', s=>{
+    if(!s.val() || !online || online.ref!==ref) return;
+    online.resigned= s.val()===room.host? room.hostColor : opp(room.hostColor);
+    onlinePump();
+  });
   onlinePresence();
 }
 function onlineLeave(){
   if(!online) return;
   const {ref,room,uid}=online;
-  ref.child('guest').off(); ref.child('moves').off();
+  ref.child('guest').off(); ref.child('moves').off(); ref.child('resign').off();
   if(room.guest){   // 在室の印を消して、相手に退出を知らせる
     const me=ref.child('presence/'+uid);
     me.onDisconnect().cancel(); me.remove().catch(()=>{});
@@ -200,11 +206,21 @@ function onlineSend(r,c){
   online.ref.child('moves/'+n).set({r,c,by:online.uid})
     .catch(e=>{ console.error(e); log('通信エラー：手を送れませんでした。'); });
 }
+/* 投了する。届いた投了は onlinePump で、演出が終わってから両者の画面で同じように反映する */
+function onlineResign(){
+  if(!online || !onlineColor || over || online.resigned) return;
+  if(!confirm('投了しますか？（相手の勝ちになります）')) return;
+  online.ref.child('resign').set(online.uid)
+    .catch(e=>{ console.error(e); log('通信エラー：投了を送れませんでした。'); });
+}
 /* 届いた手を順番どおりに1手ずつ進める（演出中は待ち、endTurn から再び呼ばれる） */
 function onlinePump(){
   if(!online || !onlineColor || busy || over) return;
   const mv=online.pending.get(online.applied);
-  if(!mv) return;
+  if(!mv){   // 届いている手をすべて進めてから投了を反映する（両者の盤面をそろえるため）
+    if(online.resigned){ gameOver(online.resigned); onlineStatus(); }
+    return;
+  }
   online.pending.delete(online.applied);
   online.applied++;
   const color= mv.by===online.room.host? online.room.hostColor : opp(online.room.hostColor);

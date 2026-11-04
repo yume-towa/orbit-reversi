@@ -172,6 +172,7 @@
   .setup-panel.waiting .setup-row, .setup-panel.waiting .startbtn{display:none}
   body.online .online-hide{display:none}
   .online-status{font-size:12px; line-height:1.6; color:#eb8a80; margin:-4px 0 10px}
+  body:not(.online) .online-only{display:none}
 
   .over{position:absolute; inset:9px; display:none; align-items:center; justify-content:center; flex-direction:column; gap:6px;
     background:rgba(12,16,22,.82); backdrop-filter:blur(3px); border-radius:6px; text-align:center; z-index:5}
@@ -307,6 +308,7 @@
 
   <div class="bar">
     <button class="reset" onclick="showSetup()">← 設定へ</button>
+    <button class="reset online-only" id="resignbtn" onclick="onlineResign()">投了</button>
     <button class="reset online-hide" onclick="reset()">リセット</button>
   </div>
   </div><!-- /#game -->
@@ -590,6 +592,7 @@ function render(){
   document.getElementById('sw').textContent=count(WHITE);
   document.getElementById('turn').innerHTML= over? 'game over'
     : `手番 <b>${glyph(player)}</b><br>${onlineColor? (player===onlineColor?'あなたの番':'相手の番') : '置く'}`;
+  document.getElementById('resignbtn').disabled=over;
   renderControls();
 }
 const controls=document.getElementById('controls');
@@ -759,15 +762,16 @@ function maybeAI(){
     playPlacement(mv[0], mv[1], `${glyph(aiColor)}(AI)`);
   }, 430);
 }
-function gameOver(){
+function gameOver(resigned){   // resigned: 投了した側の色（オンライン対戦の投了時のみ）
   over=true;
   const b=count(BLACK), w=count(WHITE);
   const big=document.getElementById('over-big'), sub=document.getElementById('over-sub');
   const bl=onlineColor? (onlineColor===BLACK?'あなた ●':'相手 ●') : aiEnabled? (humanColor===BLACK?'あなた ●':'AI ●') : '● 先手';
   const wl=onlineColor? (onlineColor===WHITE?'あなた ○':'相手 ○') : aiEnabled? (humanColor===WHITE?'あなた ○':'AI ○') : '○ 後手';
-  if(b===w){big.textContent='引き分け'; big.style.color='var(--text)';}
-  else{ big.textContent=(b>w?bl:wl)+' の勝ち'; big.style.color='var(--amber)'; }
-  sub.textContent=`● ${b} — ${w} ○`;
+  const winner= resigned? opp(resigned) : b>w? BLACK : w>b? WHITE : EMPTY;
+  if(!winner){big.textContent='引き分け'; big.style.color='var(--text)';}
+  else{ big.textContent=(winner===BLACK?bl:wl)+' の勝ち'; big.style.color='var(--amber)'; }
+  sub.textContent=`● ${b} — ${w} ○`+(resigned? `　${resigned===onlineColor?'あなた':'相手'}が投了` : '');
   document.getElementById('over').classList.add('show');
   render();
 }

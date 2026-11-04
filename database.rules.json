@@ -30,6 +30,10 @@
             "$other": { ".validate": false }
           }
         },
+        "resign": {
+          ".write": "auth != null && !data.exists() && newData.val() === auth.uid && (data.parent().child('host').val() === auth.uid || data.parent().child('guest').val() === auth.uid)",
+          ".validate": "newData.isString()"
+        },
         "presence": {
           "$uid": {
             ".write": "auth != null && auth.uid === $uid && (data.parent().parent().child('host').val() === auth.uid || data.parent().parent().child('guest').val() === auth.uid)",
