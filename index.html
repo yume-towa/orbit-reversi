@@ -171,6 +171,7 @@
   .online-msg.err{color:#eb8a80}
   .setup-panel.waiting .setup-row, .setup-panel.waiting .startbtn{display:none}
   body.online .online-hide{display:none}
+  .online-status{font-size:12px; line-height:1.6; color:#eb8a80; margin:-4px 0 10px}
 
   .over{position:absolute; inset:9px; display:none; align-items:center; justify-content:center; flex-direction:column; gap:6px;
     background:rgba(12,16,22,.82); backdrop-filter:blur(3px); border-radius:6px; text-align:center; z-index:5}
@@ -286,6 +287,7 @@
     </div>
     <div class="active-badge" id="turn">手番 <b>●</b><br>置く</div>
   </div>
+  <div class="online-status" id="online-status" style="display:none"></div>
 
   <div class="board-frame">
     <div class="grid" id="grid"></div>
