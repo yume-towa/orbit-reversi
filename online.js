@@ -6,6 +6,8 @@
      hostColor    … 部屋を作った人の色（1=黒 2=白）
      settings     … 旋回の設定 {rotType, rotCount, rotEvery}
      seed         … 旋回の抽選に使う乱数のタネ（両者の画面で同じ旋回にするため）
+     createdAt    … 部屋を作った時刻（24時間たったら消してよい目印）
+     startedAt    … 対局が始まった時刻（参加した人が書く。古い部屋の掃除で検索に使う）
      moves/{n}    … n手目（0始まり）の着手 {r, c, by}
                     パスは記録しない（同じ盤面からは両者の画面で同じようにパスと判定されるため）
      presence/{uid} … 対局中に部屋にいる印（通信が切れるとサーバーが自動で消す）
@@ -53,13 +55,15 @@ function fbInit(){
   })().catch(e=>{ fbReady=null; throw e; });
   return fbReady;
 }
-/* 古い部屋の掃除。サーバー側の自動処理（有料）を使わず、オンラインを始めた人がついでに少しずつ消す */
+/* 古い部屋の掃除。サーバー側の自動処理（有料）を使わず、オンラインを始めた人がついでに少しずつ消す。
+   ルールでは検索の範囲を時刻で絞れない（等しいかしか比べられない）ため、対局が始まった部屋（startedAt あり）を
+   古い順に20件まで読み、作ってから24時間以上たったものだけを消す。相手を待っている部屋は検索に出てこない */
 async function cleanupOldRooms(db){
   try{
     const offset=(await db.ref('.info/serverTimeOffset').once('value')).val()||0;
     const before=Date.now()+offset-ROOM_TTL-60*1000;   // サーバーの時刻を基準にし、時計のずれに1分の余裕を持たせる
-    const snap=await db.ref('rooms').orderByChild('createdAt').endAt(before).limitToFirst(20).once('value');
-    const codes=[]; snap.forEach(c=>{ codes.push(c.key); });
+    const snap=await db.ref('rooms').orderByChild('startedAt').startAt(0).limitToFirst(20).once('value');
+    const codes=[]; snap.forEach(c=>{ if(c.child('createdAt').val()<before) codes.push(c.key); });
     await Promise.all(codes.map(c=>db.ref('rooms/'+c).remove().catch(()=>{})));
   }catch(e){ console.warn('古い部屋の掃除に失敗しました', e); }
 }
@@ -118,8 +122,10 @@ async function onlineCreateRoom(){
     online={code, ref, uid, room, applied:0, pending:new Map(), sent:-1};
     onlineMsg('');
     showWaiting(code);
+    ref.onDisconnect().remove().catch(()=>{});   // 相手が来る前に閉じたら、待っている部屋をサーバーが消す
     ref.child('guest').on('value', s=>{
       if(!s.val() || !online || online.ref!==ref || onlineColor) return;
+      ref.onDisconnect().cancel().catch(()=>{});
       online.room.guest=s.val();
       onlineBegin();
     });
@@ -141,7 +147,8 @@ async function onlineJoin(){
     if(!room){ onlineMsg('その部屋は見つかりませんでした。コードを確かめてください。',true); return; }
     if(room.host===uid){ onlineMsg('自分が作った部屋には参加できません。',true); return; }
     if(room.guest){ onlineMsg('その部屋はすでに対戦が始まっています。',true); return; }
-    await ref.child('guest').set(uid);   // 同時に別の人が参加していたら、ここで拒否される
+    // 参加と同時に対局の開始時刻を書く（古い部屋の掃除の目印）。同時に別の人が参加していたら、ここで拒否される
+    await ref.update({guest:uid, startedAt:firebase.database.ServerValue.TIMESTAMP});
     room.guest=uid;
     online={code, ref, uid, room, applied:0, pending:new Map(), sent:-1};
     onlineBegin();
@@ -223,8 +230,9 @@ async function onlineRematchStart(){
   o.creatingNext=true;
   try{
     const old=o.room;
+    const now=firebase.database.ServerValue.TIMESTAMP;
     const room={host:old.host, guest:old.guest, hostColor:opp(old.hostColor), settings:old.settings,
-                seed:(Math.random()*4294967296)>>>0, createdAt:firebase.database.ServerValue.TIMESTAMP};
+                seed:(Math.random()*4294967296)>>>0, createdAt:now, startedAt:now};
     const {code}=await writeNewRoom(firebase.database(),room);
     await o.ref.child('next').set(code);
   }catch(e){ console.error(e); o.creatingNext=false; rematchMsg('再戦の部屋を作れませんでした。'); }
