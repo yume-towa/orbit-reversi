@@ -10,6 +10,8 @@
                     パスは記録しない（同じ盤面からは両者の画面で同じようにパスと判定されるため）
      presence/{uid} … 対局中に部屋にいる印（通信が切れるとサーバーが自動で消す）
      resign       … 投了した人の匿名ユーザーID（1回だけ書ける）
+     rematch/{uid} … 終局後に再戦を希望した印
+     next         … 再戦用に作った新しい部屋のコード（2人とも希望したら、作成者が新しい部屋を作って書く）
 */
 const FIREBASE_CONFIG={
   apiKey:'AIzaSyAF7A6RC5Ewf-1Mfwx-k_IZY9lvNbnAL48',
@@ -83,6 +85,14 @@ function randomCode(){
   let s=''; for(let i=0;i<CODE_LEN;i++) s+=CODE_CHARS[(Math.random()*CODE_CHARS.length)|0];
   return s;
 }
+/* 空いているコードで部屋を書き込む（同じコードの部屋があると拒否されるので、別のコードでやり直す） */
+async function writeNewRoom(db,room){
+  for(let i=0;;i++){
+    const code=randomCode(), ref=db.ref('rooms/'+code);
+    try{ await ref.set(room); return {code,ref}; }
+    catch(e){ if(i>=4) throw e; }
+  }
+}
 async function onlineCreateRoom(){
   if(online || connecting) return;
   connecting=true;
@@ -91,12 +101,7 @@ async function onlineCreateRoom(){
     const {uid,db}=await fbInit();
     const room={host:uid, hostColor:humanColor, settings:{rotType,rotCount,rotEvery},
                 seed:(Math.random()*4294967296)>>>0, createdAt:firebase.database.ServerValue.TIMESTAMP};
-    let code=null, ref=null;
-    for(let i=0;i<5 && !code;i++){
-      const c=randomCode(), r=db.ref('rooms/'+c);
-      try{ await r.set(room); code=c; ref=r; }
-      catch(e){ if(i===4) throw e; }   // 同じコードの部屋があると書き込みが拒否されるので、別のコードでやり直す
-    }
+    const {code,ref}=await writeNewRoom(db,room);
     online={code, ref, uid, room, applied:0, pending:new Map(), sent:-1};
     onlineMsg('');
     showWaiting(code);
@@ -149,24 +154,83 @@ function onlineBegin(){
     online.resigned= s.val()===room.host? room.hostColor : opp(room.hostColor);
     onlinePump();
   });
+  online.rematch={};
+  onlineRematchView();
+  ref.child('rematch').on('value', s=>{
+    if(!online || online.ref!==ref) return;
+    online.rematch=s.val()||{};
+    onlineRematchView();
+    if(uid===room.host && online.rematch[room.host] && online.rematch[room.guest]) onlineRematchStart();
+  });
+  ref.child('next').on('value', s=>{
+    if(!s.val() || !online || online.ref!==ref) return;
+    onlineSwitch(s.val());
+  });
   onlinePresence();
 }
-function onlineLeave(){
-  if(!online) return;
+/* 今の部屋の受信をやめ、在室の印を消して相手に退出を知らせる */
+function onlineDetach(){
   const {ref,room,uid}=online;
-  ref.child('guest').off(); ref.child('moves').off(); ref.child('resign').off();
-  if(room.guest){   // 在室の印を消して、相手に退出を知らせる
+  for(const k of ['guest','moves','resign','rematch','next']) ref.child(k).off();
+  if(room.guest){
     const me=ref.child('presence/'+uid);
     me.onDisconnect().cancel(); me.remove().catch(()=>{});
     ref.child('presence/'+(uid===room.host? room.guest : room.host)).off();
     if(online.connCb) firebase.database().ref('.info/connected').off('value', online.connCb);
   }
+}
+function onlineLeave(){
+  if(!online) return;
+  const {ref,room,uid}=online;
+  onlineDetach();
   if(uid===room.host && !room.guest) ref.remove().catch(()=>{});   // 相手が来る前なら部屋ごと消す
   online=null; onlineColor=0;
   document.body.classList.remove('online');
   hideWaiting(); onlineStatus();
 }
 function onlineCancel(){ onlineLeave(); onlineMsg(''); }
+
+/* ---------- 再戦（終局後、2人とも希望したら手番を入れ替えた新しい部屋で続ける） ---------- */
+function rematchMsg(t){ document.getElementById('rematch-msg').textContent=t; }
+function onlineRematch(){
+  if(!online || !onlineColor || !over || online.rematch[online.uid]) return;
+  online.ref.child('rematch/'+online.uid).set(true)
+    .catch(e=>{ console.error(e); rematchMsg('通信エラー：再戦の希望を送れませんでした。'); });
+}
+function onlineRematchView(){
+  const {room,uid}=online;
+  const me=online.rematch[uid], them=online.rematch[uid===room.host? room.guest : room.host];
+  document.getElementById('rematchbtn').disabled=!!me;
+  rematchMsg(me&&them? '再戦の準備中…' : me? '相手の返事を待っています…' : them? '相手が再戦を希望しています。' : '');
+}
+/* 部屋を作った側が、手番を入れ替え・旋回の設定はそのまま・新しいタネで部屋を作り、コードを今の部屋に書く */
+async function onlineRematchStart(){
+  const o=online;
+  if(o.creatingNext) return;
+  o.creatingNext=true;
+  try{
+    const old=o.room;
+    const room={host:old.host, guest:old.guest, hostColor:opp(old.hostColor), settings:old.settings,
+                seed:(Math.random()*4294967296)>>>0, createdAt:firebase.database.ServerValue.TIMESTAMP};
+    const {code}=await writeNewRoom(firebase.database(),room);
+    await o.ref.child('next').set(code);
+  }catch(e){ console.error(e); o.creatingNext=false; rematchMsg('再戦の部屋を作れませんでした。'); }
+}
+/* 新しい部屋に移って、次の対局を始める（両者とも next を受け取ってここに来る） */
+async function onlineSwitch(code){
+  const o=online;
+  if(o.switching) return;
+  o.switching=true;
+  try{
+    const ref=firebase.database().ref('rooms/'+code);
+    const room=(await ref.once('value')).val();
+    if(online!==o) return;   // 待っている間に部屋から抜けていたら何もしない
+    if(!room || room.host!==o.room.host || room.guest!==o.room.guest) throw new Error('再戦の部屋の内容が合いません');
+    onlineDetach();
+    online={code, ref, uid:o.uid, room, applied:0, pending:new Map(), sent:-1};
+    onlineBegin();
+  }catch(e){ console.error(e); o.switching=false; if(online===o) rematchMsg('再戦の部屋を開けませんでした。'); }
+}
 
 /* ---------- 接続状態（自分・相手の通信切れの表示） ---------- */
 function onlinePresence(){
