@@ -25,6 +25,7 @@ const FIREBASE_CONFIG={
 const FIREBASE_SDK='https://www.gstatic.com/firebasejs/12.4.0/';
 const CODE_CHARS='23456789ABCDEFGHJKLMNPQRSTUVWXYZ';   // 見間違えやすい 0/O・1/I は使わない
 const CODE_LEN=5;
+const ROOM_TTL=24*60*60*1000;   // 作ってからこの時間がたった部屋は、使われていないものとして消す
 
 let fbReady=null;   // Firebase の読み込みと匿名ログイン（初回だけ行う）
 let online=null;    // 参加中の部屋 {code, ref, uid, room, applied, pending, sent}
@@ -46,9 +47,21 @@ function fbInit(){
     const auth=firebase.auth();
     await auth.setPersistence(firebase.auth.Auth.Persistence.SESSION);   // タブごとに別のユーザー（同じブラウザの2タブでも対戦できる）
     const cred=await auth.signInAnonymously();
-    return {uid:cred.user.uid, db:firebase.database()};
+    const db=firebase.database();
+    cleanupOldRooms(db);   // 待たずに裏で進める
+    return {uid:cred.user.uid, db};
   })().catch(e=>{ fbReady=null; throw e; });
   return fbReady;
+}
+/* 古い部屋の掃除。サーバー側の自動処理（有料）を使わず、オンラインを始めた人がついでに少しずつ消す */
+async function cleanupOldRooms(db){
+  try{
+    const offset=(await db.ref('.info/serverTimeOffset').once('value')).val()||0;
+    const before=Date.now()+offset-ROOM_TTL-60*1000;   // サーバーの時刻を基準にし、時計のずれに1分の余裕を持たせる
+    const snap=await db.ref('rooms').orderByChild('createdAt').endAt(before).limitToFirst(20).once('value');
+    const codes=[]; snap.forEach(c=>{ codes.push(c.key); });
+    await Promise.all(codes.map(c=>db.ref('rooms/'+c).remove().catch(()=>{})));
+  }catch(e){ console.warn('古い部屋の掃除に失敗しました', e); }
 }
 
 /* ---------- 画面表示 ---------- */
