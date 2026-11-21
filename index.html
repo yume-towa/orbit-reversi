@@ -179,10 +179,17 @@
   .over.show{display:flex}
   .over .big{font-size:22px; font-weight:600; letter-spacing:.03em}
   .over .sub{font-family:var(--mono); font-size:12px; color:var(--muted)}
+/* 作品一覧(TOPページ)に戻るボタン */
+.back-nav{margin:0 0 12px}
+.back-to-list{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;
+  font-family:inherit;font-size:12.5px;line-height:1.5;color:var(--muted);text-decoration:none;transition:color .15s,border-color .15s}
+.back-to-list:hover{color:var(--text);border-color:var(--muted)}
+.back-to-list:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 </style>
 </head>
 <body>
 <div class="wrap">
+  <nav class="back-nav"><a class="back-to-list" href="https://yume-towa.github.io/">← 一覧に戻る</a></nav>
   <header>
     <h1>Orbit Reversi<span class="jp">旋回リバーシ</span></h1>
     <span class="tag">prototype</span>
